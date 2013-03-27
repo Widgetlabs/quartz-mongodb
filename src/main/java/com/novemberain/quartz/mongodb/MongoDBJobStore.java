@@ -130,15 +130,20 @@ public class MongoDBJobStore implements JobStore, Constants {
   public boolean removeJob(JobKey jobKey) throws JobPersistenceException {
     BasicDBObject keyObject = Keys.keyToDBObject(jobKey);
     DBCursor find = jobCollection.find(keyObject);
-    if (find.hasNext()) {
-      DBObject jobObj = find.next();
-      jobCollection.remove(keyObject);
-      triggerCollection.remove(new BasicDBObject(TRIGGER_JOB_ID, jobObj.get("_id")));
+    try {
+      if (find.hasNext()) {
+        DBObject jobObj = find.next();
+        jobCollection.remove(keyObject);
+        triggerCollection.remove(new BasicDBObject(TRIGGER_JOB_ID, jobObj.get("_id")));
 
-      return true;
+        return true;
+      }
+
+      return false;
     }
-
-    return false;
+    finally {
+      find.close();
+    }
   }
 
   public boolean removeJobs(List<JobKey> jobKeys) throws JobPersistenceException {
@@ -199,30 +204,40 @@ public class MongoDBJobStore implements JobStore, Constants {
   public boolean removeTrigger(TriggerKey triggerKey) throws JobPersistenceException {
     BasicDBObject dbObject = Keys.keyToDBObject(triggerKey);
     DBCursor triggers = triggerCollection.find(dbObject);
-    if (triggers.count() > 0) {
-      DBObject trigger = triggers.next();
-      if (trigger.containsField( TRIGGER_JOB_ID )) {
+    try {
+      if (triggers.count() > 0) {
+        DBObject trigger = triggers.next();
+        if (trigger.containsField( TRIGGER_JOB_ID )) {
           // There is only 1 job per trigger so no need to look further than 1 job.
           DBObject job = jobCollection.findOne(new BasicDBObject("_id", trigger.get(TRIGGER_JOB_ID)));
           // Durability is not yet implemented in MongoDBJOBStore so next will always be true
           if (!job.containsField( JOB_DURABILITY ) || job.get( JOB_DURABILITY ).toString() == "false") {
-              // Check if this job is referenced by other triggers.
-              BasicDBObject query = new BasicDBObject();
-              query.put(TRIGGER_JOB_ID, job.get( "_id" ));
-              DBCursor referencedTriggers = triggerCollection.find(query);
-              if (referencedTriggers != null && referencedTriggers.count() <= 1) {
-                  jobCollection.remove( job );
+            // Check if this job is referenced by other triggers.
+            BasicDBObject query = new BasicDBObject();
+            query.put(TRIGGER_JOB_ID, job.get( "_id" ));
+            DBCursor referencedTriggers = triggerCollection.find(query);
+            try {
+              if (referencedTriggers.count() <= 1) {
+                jobCollection.remove( job );
               }
+            }
+            finally {
+              referencedTriggers.close();
+            }
           }
-      } else {
+        } else {
           log.debug("The triggger had no associated jobs");
+        }
+        triggerCollection.remove(dbObject);
+
+        return true;
       }
-      triggerCollection.remove(dbObject);
 
-      return true;
+      return false;
     }
-
-    return false;
+    finally {
+      triggers.close();
+    }
   }
 
   public boolean removeTriggers(List<TriggerKey> triggerKeys) throws JobPersistenceException {
@@ -310,26 +325,37 @@ public class MongoDBJobStore implements JobStore, Constants {
   }
 
   public Set<JobKey> getJobKeys(GroupMatcher<JobKey> matcher) throws JobPersistenceException {
-    DBCursor cursor = jobCollection.find(queryHelper.matchingKeysConditionFor(matcher), KEY_AND_GROUP_FIELDS);
-
     Set<JobKey> result = new HashSet<JobKey>();
-    while (cursor.hasNext()) {
-      DBObject dbo = cursor.next();
-      JobKey key = Keys.dbObjectToJobKey(dbo);
-      result.add(key);
+
+    DBCursor cursor = jobCollection.find(queryHelper.matchingKeysConditionFor(matcher), KEY_AND_GROUP_FIELDS);
+    try {
+      while (cursor.hasNext()) {
+        DBObject dbo = cursor.next();
+        JobKey key = Keys.dbObjectToJobKey(dbo);
+        result.add(key);
+      }
+    }
+    finally {
+      cursor.close();
     }
 
     return result;
   }
 
   public Set<TriggerKey> getTriggerKeys(GroupMatcher<TriggerKey> matcher) throws JobPersistenceException {
+    Set<TriggerKey> result = new HashSet<TriggerKey>();
+
     DBCursor cursor = triggerCollection.find(queryHelper.matchingKeysConditionFor(matcher), KEY_AND_GROUP_FIELDS);
 
-    Set<TriggerKey> result = new HashSet<TriggerKey>();
-    while (cursor.hasNext()) {
-      DBObject dbo = cursor.next();
-      TriggerKey key = Keys.dbObjectToTriggerKey(dbo);
-      result.add(key);
+    try {
+      while (cursor.hasNext()) {
+        DBObject dbo = cursor.next();
+        TriggerKey key = Keys.dbObjectToTriggerKey(dbo);
+        result.add(key);
+      }
+    }
+    finally {
+      cursor.close();
     }
 
     return result;
@@ -353,9 +379,15 @@ public class MongoDBJobStore implements JobStore, Constants {
     DBObject dbObject = findJobDocumentByKey(jobKey);
 
     List<OperableTrigger> triggers = new ArrayList<OperableTrigger>();
+
     DBCursor cursor = triggerCollection.find(new BasicDBObject(TRIGGER_JOB_ID, dbObject.get("_id")));
-    while (cursor.hasNext()) {
-      triggers.add(toTrigger(cursor.next()));
+    try {
+      while (cursor.hasNext()) {
+        triggers.add(toTrigger(cursor.next()));
+      }
+    }
+    finally {
+      cursor.close();
     }
 
     return triggers;
@@ -462,74 +494,83 @@ public class MongoDBJobStore implements JobStore, Constants {
 
     List<OperableTrigger> triggers = new ArrayList<OperableTrigger>();
     DBCursor cursor = triggerCollection.find(query);
+    try {
+      BasicDBObject sort = new BasicDBObject();
+      sort.put(TRIGGER_NEXT_FIRE_TIME, Integer.valueOf(1));
+      cursor.sort(sort);
 
-    BasicDBObject sort = new BasicDBObject();
-    sort.put(TRIGGER_NEXT_FIRE_TIME, Integer.valueOf(1));
-    cursor.sort(sort);
+      if (log.isDebugEnabled()) {
+        log.debug("Found " + cursor.count() + " triggers which are eligible to be run.");
+      }
 
-    if (log.isDebugEnabled()) {
-      log.debug("Found " + cursor.count() + " triggers which are eligible to be run.");
-    }
+      while (cursor.hasNext() && maxCount > triggers.size()) {
+        DBObject dbObj = cursor.next();
 
-    while (cursor.hasNext() && maxCount > triggers.size()) {
-      DBObject dbObj = cursor.next();
-
-      BasicDBObject lock = new BasicDBObject();
-      lock.put(LOCK_KEY_NAME, dbObj.get(KEY_NAME));
-      lock.put(LOCK_KEY_GROUP, dbObj.get(KEY_GROUP));
-      lock.put(LOCK_INSTANCE_ID, instanceId);
-      lock.put(LOCK_TIME, new Date());
-
-      try {
-        OperableTrigger trigger = toTrigger(dbObj);
-
-        if (trigger.getNextFireTime() == null) {
-          if (log.isDebugEnabled()) {
-            log.debug("Skipping trigger " + trigger.getKey() + " as it has no next fire time.");
-          }
-
-          continue;
-        }
-
-        // deal with misfires
-        if (applyMisfire(trigger) && trigger.getNextFireTime() == null) {
-          if (log.isDebugEnabled()) {
-            log.debug("Skipping trigger " + trigger.getKey() + " as it has no next fire time after the misfire was applied.");
-          }
-
-          continue;
-        }
-        log.debug("Inserting lock for trigger " + trigger.getKey());
-        locksCollection.insert(lock);
-        log.debug("Aquired trigger " + trigger.getKey());
-        triggers.add(trigger);
-      } catch (DuplicateKey e) {
-
-        OperableTrigger trigger = toTrigger(dbObj);
-
-        // someone else acquired this lock. Move on.
-        log.debug("Failed to acquire trigger " + trigger.getKey() + " due to a lock");
-
-        lock = new BasicDBObject();
+        BasicDBObject lock = new BasicDBObject();
         lock.put(LOCK_KEY_NAME, dbObj.get(KEY_NAME));
         lock.put(LOCK_KEY_GROUP, dbObj.get(KEY_GROUP));
+        lock.put(LOCK_INSTANCE_ID, instanceId);
+        lock.put(LOCK_TIME, new Date());
 
-        DBObject existingLock;
-        DBCursor lockCursor = locksCollection.find(lock);
-        if (lockCursor.hasNext()) {
-          existingLock = lockCursor.next();
-        } else {
-          log.warn("Error retrieving expired lock from the database. Maybe it was deleted");
-          return acquireNextTriggers(noLaterThan, maxCount, timeWindow);
-        }
+        try {
+          OperableTrigger trigger = toTrigger(dbObj);
 
-        // support for trigger lock expirations
-        if (isTriggerLockExpired(existingLock)) {
-          log.warn("Lock for trigger " + trigger.getKey() + " is expired - removing lock and retrying trigger acquisition");
-          removeTriggerLock(trigger);
-          return acquireNextTriggers(noLaterThan, maxCount, timeWindow);
+          if (trigger.getNextFireTime() == null) {
+            if (log.isDebugEnabled()) {
+              log.debug("Skipping trigger " + trigger.getKey() + " as it has no next fire time.");
+            }
+
+            continue;
+          }
+
+          // deal with misfires
+          if (applyMisfire(trigger) && trigger.getNextFireTime() == null) {
+            if (log.isDebugEnabled()) {
+              log.debug("Skipping trigger " + trigger.getKey() + " as it has no next fire time after the misfire was applied.");
+            }
+
+            continue;
+          }
+          log.debug("Inserting lock for trigger " + trigger.getKey());
+          locksCollection.insert(lock);
+          log.debug("Aquired trigger " + trigger.getKey());
+          triggers.add(trigger);
+        } catch (DuplicateKey e) {
+
+          OperableTrigger trigger = toTrigger(dbObj);
+
+          // someone else acquired this lock. Move on.
+          log.debug("Failed to acquire trigger " + trigger.getKey() + " due to a lock");
+
+          lock = new BasicDBObject();
+          lock.put(LOCK_KEY_NAME, dbObj.get(KEY_NAME));
+          lock.put(LOCK_KEY_GROUP, dbObj.get(KEY_GROUP));
+
+          DBObject existingLock;
+          DBCursor lockCursor = locksCollection.find(lock);
+          try {
+            if (lockCursor.hasNext()) {
+              existingLock = lockCursor.next();
+            } else {
+              log.warn("Error retrieving expired lock from the database. Maybe it was deleted");
+              return acquireNextTriggers(noLaterThan, maxCount, timeWindow);
+            }
+
+            // support for trigger lock expirations
+            if (isTriggerLockExpired(existingLock)) {
+              log.warn("Lock for trigger " + trigger.getKey() + " is expired - removing lock and retrying trigger acquisition");
+              removeTriggerLock(trigger);
+              return acquireNextTriggers(noLaterThan, maxCount, timeWindow);
+            }
+          }
+          finally {
+            lockCursor.close();
+          }
         }
       }
+    }
+    finally {
+      cursor.close();
     }
 
     return triggers;
