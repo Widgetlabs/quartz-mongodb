@@ -10,7 +10,7 @@ import java.util.Collection;
 import static com.novemberain.quartz.mongodb.Keys.KEY_GROUP;
 
 public class QueryHelper {
-  public DBObject matchingKeysConditionFor(GroupMatcher matcher) {
+  public DBObject matchingKeysConditionFor(GroupMatcher<?> matcher) {
     BasicDBObjectBuilder builder = BasicDBObjectBuilder.start();
 
     final String compareToValue = matcher.getCompareToValue();

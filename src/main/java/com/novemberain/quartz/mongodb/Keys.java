@@ -18,7 +18,7 @@ public class Keys {
   public static final String KEY_NAME = "keyName";
   public static final String KEY_GROUP = "keyGroup";
 
-  public static BasicDBObject keyToDBObject(Key key) {
+  public static BasicDBObject keyToDBObject(Key<?> key) {
     BasicDBObject job = new BasicDBObject();
     job.put(JOB_KEY_NAME, key.getName());
     job.put(JOB_KEY_GROUP, key.getGroup());

@@ -11,6 +11,7 @@ package com.novemberain.quartz.mongodb;
 
 import com.mongodb.*;
 import com.mongodb.MongoException.DuplicateKey;
+
 import org.bson.types.ObjectId;
 import org.quartz.Calendar;
 import org.quartz.*;
@@ -28,6 +29,7 @@ import java.net.UnknownHostException;
 import java.util.*;
 
 import com.novemberain.quartz.mongodb.Constants;
+
 import static com.novemberain.quartz.mongodb.Keys.*;
 
 public class MongoDBJobStore implements JobStore, Constants {
@@ -125,11 +127,10 @@ public class MongoDBJobStore implements JobStore, Constants {
     throw new UnsupportedOperationException();
   }
 
-  @SuppressWarnings("LoopStatementThatDoesntLoop")
   public boolean removeJob(JobKey jobKey) throws JobPersistenceException {
     BasicDBObject keyObject = Keys.keyToDBObject(jobKey);
     DBCursor find = jobCollection.find(keyObject);
-    while (find.hasNext()) {
+    if (find.hasNext()) {
       DBObject jobObj = find.next();
       jobCollection.remove(keyObject);
       triggerCollection.remove(new BasicDBObject(TRIGGER_JOB_ID, jobObj.get("_id")));
@@ -334,10 +335,12 @@ public class MongoDBJobStore implements JobStore, Constants {
     return result;
   }
 
+  @SuppressWarnings("unchecked")
   public List<String> getJobGroupNames() throws JobPersistenceException {
     return new ArrayList<String>(jobCollection.distinct(KEY_GROUP));
   }
 
+  @SuppressWarnings("unchecked")
   public List<String> getTriggerGroupNames() throws JobPersistenceException {
     return new ArrayList<String>(triggerCollection.distinct(KEY_GROUP));
   }
@@ -726,7 +729,8 @@ public class MongoDBJobStore implements JobStore, Constants {
   protected OperableTrigger toTrigger(TriggerKey triggerKey, DBObject dbObject) throws JobPersistenceException {
     OperableTrigger trigger;
     try {
-      Class<OperableTrigger> triggerClass = (Class<OperableTrigger>) getTriggerClassLoader().loadClass((String) dbObject.get(TRIGGER_CLASS));
+      @SuppressWarnings("unchecked")
+	  Class<OperableTrigger> triggerClass = (Class<OperableTrigger>) getTriggerClassLoader().loadClass((String) dbObject.get(TRIGGER_CLASS));
       trigger = triggerClass.newInstance();
     } catch (ClassNotFoundException e) {
       throw new JobPersistenceException("Could not find trigger class " + (String) dbObject.get(TRIGGER_CLASS));
