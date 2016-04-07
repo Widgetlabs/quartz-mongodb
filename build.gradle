@@ -1,14 +1,13 @@
-apply plugin: 'idea'
-apply plugin: 'java'
+apply plugin: "java"
 
-group = 'com.novemberain'
-version = '1.1.0-fluidsonic'
+group = "com.novemberain"
+version = "1.1.0-fluidsonic"
 
 project.sourceCompatibility = 1.7
 project.targetCompatibility = 1.7
 
 tasks.withType(JavaCompile) {
-    options.encoding = 'UTF-8'
+    options.encoding = "UTF-8"
 }
 
 repositories {
@@ -16,6 +15,6 @@ repositories {
 }
 
 dependencies {
-    compile 'org.mongodb:mongo-java-driver:3.2.2'
-    compile 'org.quartz-scheduler:quartz:2.2.2'
+    compile "org.mongodb:mongo-java-driver:3.2.2"
+    compile "org.quartz-scheduler:quartz:2.2.2"
 }
