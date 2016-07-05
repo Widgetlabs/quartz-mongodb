@@ -155,7 +155,7 @@
         job     (j/build
                  (j/of-type JobD)
                  (j/with-identity "clojurewerkz.quartzite.test.execution.job4" "tests")
-                 (j/using-job-data { "job-key" "job-value" }))
+                 (j/using-job-data { "job-key" "job-element" }))
         trigger  (t/build
                   (t/start-now)
                   (t/with-identity "clojurewerkz.quartzite.test.execution.trigger4" "tests")
@@ -165,7 +165,7 @@
     (sched/schedule job trigger)
     (sched/trigger jk)
     (Thread/sleep 1000)
-    (is (= "job-value" (get @value4 "job-key")))))
+    (is (= "job-element" (get @value4 "job-key")))))
 
 
 ;;
